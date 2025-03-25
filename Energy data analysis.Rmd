@@ -1,0 +1,393 @@
+---
+title: "Energy Data Analysis"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+#Load the data and select the variables of interest
+```{r}
+library(readxl)
+data<- read_xlsx("Cleaned Energy data.xlsx")
+
+library(tidyr)
+library(dplyr)
+df <- data |>
+  select(c("ID","Date.x","Energy_utilization_kWh.x" ,"Cost_USD.x",          "Location.x","Device_Type.x","Operational_status.x" ,"User_type.x"          ,"Method_of_pay.x")) |>
+  glimpse()
+
+#Drop the last characters (.x)
+colnames(df) <- gsub("\\.x","",colnames(df))
+
+# A description of the data types in the dataset
+summary(df)
+
+#Check for character variables and change to factor variables
+character_columns <- sapply(df,is.character) 
+print(character_columns)
+
+df[c("Device_Type","Operational_status","User_type","Method_of_pay")] <- lapply(df[c("Device_Type","Operational_status","User_type","Method_of_pay")],factor)
+
+table(df$Location)
+ df <- df |>
+   mutate(Location = recode(Location, "Region A" = "Region A","region B"= "Region B","Region C"="Region C"))
+ 
+ 
+```
+##Energy utilization analysis
+```{r}
+##To find the total energy consumption per location
+consumption_per_region<-
+  df |> 
+  select(Location,Energy_utilization_kWh) |>
+  group_by(Location) |>
+  mutate(Total_consumption = sum(Energy_utilization_kWh)) |>
+  glimpse()
+
+attach(df)
+consumption<- df |>
+  aggregate(Energy_utilization_kWh~Location,FUN = sum)
+print(consumption)
+
+#How does energy consumption differ by the device type?
+aov_result<- aov(Energy_utilization_kWh~Device_Type,data = df)
+summary(aov_result) #P-value= 0.784 (>0.05) thus we fail to reject H0. Any variability in energy consumption is not associated with the type of device.
+
+#Average energy utilization per day for different user types 
+av_consumption <- df |>
+  group_by(User_type,Date) |>
+  summarise( daily_average= mean(Energy_utilization_kWh)) |>
+  ungroup()
+print(av_consumption)
+
+#Peak energy utilization for each region, and during which hours do the peaks occur
+peak_consumption <- df |>
+  group_by(Date,Location)|>
+  summarise(peak_consumption = max(Energy_utilization_kWh)) |>
+  print() |>
+  ungroup()
+
+peak_day <- peak_consumption |>
+  group_by(Location)|>
+  summarise(peak_day = max(peak_consumption))|>
+  print()|>
+  ungroup()
+
+ 
+```
+#Cost analysis
+```{r}
+#Average cost (Cost_USD) for each device type
+Average_cost <- aggregate(Cost_USD~Device_Type,data = df, FUN = mean)
+print(Average_cost)
+
+#Is there a correlation between energy utilization and cost for each location?
+## Calculate the correlation
+
+correlation <- df |>
+  group_by(Location) |>
+  summarise(correlation = cor(Energy_utilization_kWh,Cost_USD)) |>
+  print()
+summary(correlation)
+## Graphical representation
+library(ggplot2)
+ggplot(df, aes(x=Cost_USD, y =Energy_utilization_kWh, color=Location)) +
+  geom_point() +
+  labs(
+    main="Correlation between Energy consumption and Cost",
+    x="Cost in USD",
+    y="Energy consumption"
+  ) +
+  theme_minimal()
+  
+#The correlation between energy consumption and cost is very weak across the different locations
+
+##Average cost per energy unit (Cost/ Energy_utilization_kWh) differ between regions_
+Average_cost_per_energy_unit <- df |>
+  group_by(Location) |>
+  summarise(Av_cost_per_kwh = mean(Cost_USD/Energy_utilization_kWh,na.rm=TRUE)) |>
+  print()
+
+#Distribution of costs across different user types and payment methods
+ggplot(df, aes(x=User_type,y=Cost_USD,fill=Method_of_pay)) +
+  geom_bar(stat = "identity",position="dodge")+
+  labs(x="User_type",y="Cost_USD")
+
+#Total cost for each region during the dataset period
+Total_cost <- df |>
+  group_by(Location) |>
+  summarise(Total=sum(Cost_USD)) |>
+  print() |>
+  ungroup()
+
+```
+#Operation status analysis
+```{r}
+# Percentage of operational status per device type
+op_proportions<- prop.table(table(df$Operational_status,df$Device_Type))*100
+round(op_proportions,2)
+
+# Effect of operational status on energy utilization and cost
+## (Solution: Assess the relationship between the variables first)
+
+library(ggplot2)
+ggplot(df, aes(y=Operational_status,x=Cost_USD)) + geom_boxplot()
+ggplot(df, aes(y=Operational_status, x=Energy_utilization_kWh)) + geom_boxplot()
+
+#One way ANOVA
+
+aov_cost = aov(Cost_USD~Operational_status, data=df)
+summary(aov_cost) #The mean differences in cost are not statistically significant across the 3 operational status 
+
+aov_energy <- aov(Energy_utilization_kWh~Operational_status,data=df)
+summary(aov_energy) #The mean differences in energy utilization are not statistically significant across the 3 operational status
+
+##Conclusion: Operational status has no statistically significant effect on energy utilization or cost.
+
+# How operational status varies across the regions
+ggplot(df, aes(x=Operational_status,fill=Location)) + geom_bar(position = "fill")+
+  labs(x = "Operational status",
+       y= "Region",
+       main= "Proportions") +
+  theme_minimal()
+
+round(prop.table(table(Operational_status,Location)),2)
+
+```
+#User type and method of pay analysis
+```{r}
+#Energy utilization between the different user types.
+boxplot(Energy_utilization_kWh~User_type, data= df, col="yellow", horizontal=T)
+
+## Check if energy utilization differs across the user types
+test_1<-t.test(Energy_utilization_kWh~User_type,data = df)
+test_1 #There is no statistically significant difference in energy utilization across the two groups
+
+#Energy utilization differ between device types
+
+boxplot(Energy_utilization_kWh~Device_Type, data=df, col="purple", horizontal = F)
+
+aov_2 <- aov(Energy_utilization_kWh~Device_Type,data=df)
+summary(aov_2) #There is no statistically significant difference between the means of the device types.
+
+#Commonly used method of pay across the regions and user types?
+as.factor(df$Location)
+table<- table(df$Location,df$Method_of_pay,df$User_type)
+table
+
+#Method of pay by regions
+ggplot(df, aes(x=Method_of_pay,fill=Location)) +
+  geom_bar(position="dodge")+
+  labs(main="Payment by user type",
+       x="Method of pay",
+       y="Location")
+
+#Method of pay by user types
+ggplot(df, aes(x=Method_of_pay, fill=User_type)) +
+  geom_bar(position = "dodge") +
+  labs(
+    main="Method of pay by user types",
+    x="Payment method",
+    y="User types"
+  )
+
+#Chi square tests for association between:
+tableA <- table(df$Method_of_pay,df$Location)
+chi_loc_pay <- chisq.test(tableA)
+ print(chi_loc_pay) #p-value = 0.4(> 0.05) shows no statistically significant relationship between the 2 variables
+ 
+ tableB <- table(df$Method_of_pay,df$User_type)
+ chi_type_pay <- chisq.test(tableB)
+ print(chi_type_pay) #p-value=0.9 (>0.05) shows no statistically significant relationship between the 2 variables
+ 
+ ## How choice of payment method affect the overall cost for each user type?
+ 
+ summary <- df |>
+   group_by(Method_of_pay) |>
+   summarise(Avg_cost=mean(Cost_USD,na.rm=TRUE),
+             Total_amount = sum(Cost_USD,na.rm=TRUE),
+             Count=n())
+   print(summary)
+
+```
+#Time Series and Seasonal patterns
+
+```{r}
+#  Trends in Energy utilization overtime?
+df$Date <-as.Date(df$Date)
+
+
+#Extract Month and Day from Date
+df$Month=format(df$Date,"%m")
+df$Day = format(df$Date,"%d")
+df$Year = format(df$Date,"%Y")
+
+df$Month=as.factor(df$Month)
+#Average utilization per day
+
+daily_Av_util <- df %>%
+  group_by(Day) %>%
+  summarise(Average_utilization = mean(Energy_utilization_kWh,na.rm=TRUE)) %>%
+  print()
+
+monthly_trend <- df |>
+  group_by(Month) |>
+  summarise(Av_utilization = mean(Energy_utilization_kWh, na.rm=TRUE)) |>
+  print()
+
+#Visualize
+ggplot(daily_Av_util, aes(x=Day, y=Average_utilization,group=1))+
+  geom_line() +
+  labs(title= "Daily Energy utilization trend",
+       x="Date",y="Av. energy utilization") +
+  theme_minimal()
+
+ggplot(monthly_trend,aes(x=Month,y=Av_utilization)) +
+  geom_line()+
+   geom_point() +
+  labs(title="Monthly energy utilization trend",
+       x="Month",
+       y="Average energy utilization") +
+ theme_minimal()
+
+# Cost trends
+
+monthly_cost_trends <- df |>
+  group_by(Month) |>
+  summarise(Avg_cost=mean(Cost_USD)) |>
+  print()
+
+ggplot(monthly_cost_trends,aes(x=Month,y=Avg_cost, group=1)) + geom_line() + 
+  geom_point() +
+  labs(
+    title="Monthly cost trends in USD",
+    x="Month",
+    y="Average cost"
+  ) + theme_minimal()
+
+#Identify month with highest energy utilization
+monthly_trend |> 
+  filter(Av_utilization== max(Av_utilization))
+
+monthly_trend |> 
+  filter(Av_utilization == min(Av_utilization))
+
+ daily_Av_util |>
+   filter(Average_utilization == max(Average_utilization))
+ daily_Av_util |> filter(Average_utilization == min(Average_utilization))
+  
+ #Highest average cost per month
+ monthly_cost_trends |> filter(Avg_cost == max(Avg_cost))
+ monthly_cost_trends |> filter(Avg_cost == min(Avg_cost))
+ 
+```
+#Location based insights
+```{r}
+#Energy use and cost differences across the regions
+
+sum(is.na(df$Energy_utilization_kWh))
+sum(is.na(df$Cost_USD))
+
+summary_stats <- df |>
+  group_by(Location) |>
+  summarise(
+    av_cost=mean(Cost_USD),
+    total_cost = sum(Cost_USD),
+    count=n(),
+    median_cost=median(Cost_USD),
+    sd_cost=sd(Cost_USD),
+    max_cost=max(Cost_USD),
+    min_cost = min(Cost_USD),
+    av_utilization=mean(Energy_utilization_kWh),
+    total_utilization = sum(Energy_utilization_kWh),
+    count=n(),
+    median_utilization=median(Energy_utilization_kWh),
+    sd_utilization=sd(Energy_utilization_kWh),
+    max_utilization=max(Energy_utilization_kWh),
+    min_utilization = min(Energy_utilization_kWh),
+    
+  ) |>
+print()
+
+#Visualization
+ggplot(df, aes(x=Location, y=Energy_utilization_kWh, fill=Location)) + geom_boxplot() +
+  labs(
+    title= "Energy utilization by Location",
+    x="Region",
+    y="Energy utilization"
+  ) + theme_minimal()
+
+ggplot(df, aes(x=Location,y= Cost_USD, fill = Location)) + geom_boxplot() +
+  labs(
+    title = "Cost by Region",
+    x="Region",
+    y="Cost in USD"
+  ) + theme_minimal()
+
+# Location with highest energy consumption
+df %>%
+  group_by(Location) %>%
+  summarise(max_use= max(Energy_utilization_kWh)) %>%
+  print()
+
+#correlation between energy consumption and cost
+cor_1<- cor(df$Energy_utilization_kWh,df$Cost_USD, use="complete.obs")
+cor_1 #No linear relationship
+```
+#Device type Performance
+```{r}
+#Highest energy utilization by device
+energy_by_device<- df |>
+  group_by(Device_Type) |>
+  summarise(mean_energy = mean(Energy_utilization_kWh),
+            total_energy= sum(Energy_utilization_kWh)) |>
+  arrange(desc(mean_energy)) |>
+  print()
+
+#Most cost effective device
+cost_per_unit_of_energy<- df |>
+  group_by(Device_Type) |>
+  summarise(total_cost= sum(Cost_USD),
+            total_energy_use = sum(Energy_utilization_kWh)) |> mutate(cost_per_unit = total_cost/total_energy_use) |>
+  arrange(desc(total_cost)) |>
+  print()
+
+#Effect of operational status on energy use for different devices
+
+model <- aov(Energy_utilization_kWh~Operational_status+Device_Type+Operational_status:Device_Type,data=df)
+summary(model)
+
+#energy utilization efficiency (energy per cost) for each device type
+energy_per_cost <- df %>%
+  group_by(Device_Type) %>%
+  summarise(total_energy_use = sum(Energy_utilization_kWh),
+            total_cost = sum(Cost_USD)) %>%
+  mutate(energy_per_cost = total_energy_use/total_cost) %>%
+  arrange(desc(energy_per_cost)) %>%
+  print()
+```
+
+```{r}
+#Outliers and anomalies
+
+ggplot(df, aes(x="", y= Energy_utilization_kWh)) +
+  geom_boxplot() +
+  labs(title= "Boxplot for energy utilization (kwh)",
+       y="Energy utilization") +
+  theme_minimal()
+
+ggplot(df, aes(x="",y=Cost_USD)) +
+  geom_boxplot() +
+  theme_minimal()
+
+#Using IQR
+Q1_energy <-quantile(df$Energy_utilization_kWh,0.25,na.rm=TRUE)
+Q3_energy <- quantile(df$Energy_utilization_kWh,0.75,na.rm=TRUE)
+IQR = Q3_energy-Q1_energy
+
+lower_bound = Q1_energy - IQR*1.5
+upper_bound = Q3_energy + IQR*1.5
+
+outliers <- df |>
+  filter(Energy_utilization_kWh > upper_bound| Energy_utilization_kWh< lower_bound) |>
+  print()
+```
